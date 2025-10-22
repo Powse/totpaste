@@ -14,4 +14,4 @@ TotPaste is a desktop **TOTP (Time-based One-Time Password) manager** that runs 
 
 ## Screenshots
 
-![TotPaste Screenshot](screenshot/main.png)
+![](screenshots/main.png)
