@@ -14,7 +14,7 @@ const NONCE_SIZE: usize = 12;
 
 pub fn crypto_encrypt_text_to_file_with_key(
     plaintext: &str,
-    directory: &str,
+    directory: &Path,
     file: &str,
     key: &[u8; 32],
 ) -> Result<(), String> {
@@ -30,32 +30,19 @@ pub fn crypto_encrypt_text_to_file_with_key(
     output.extend_from_slice(&nonce);
     output.extend_from_slice(&ciphertext);
 
-    let dir = Path::new(directory);
-    if !dir.exists() {
-        fs::create_dir_all(dir).map_err(|e| format!("Couldn't create store directory {}", e))?;
-    }
-    fs::write(Path::new(directory).join(file), output)
-        .map_err(|e| format!("Encryption failed: {}", e))?;
+    ensure_directory_exists(directory)?;
+
+    fs::write(directory.join(file), output).map_err(|e| format!("Encryption failed: {}", e))?;
 
     Ok(())
 }
 
 pub fn crypto_decrypt_file_with_key(
-    directory: &str,
+    directory: &Path,
     file: &str,
     key: &[u8; 32],
 ) -> Result<Vec<u8>, String> {
-    let dir = Path::new(directory);
-    if !dir.exists() {
-        fs::create_dir_all(dir).map_err(|e| format!("Couldn't create store directory {}", e))?;
-    }
-    let data = fs::read(Path::new(directory).join(file))
-        .map_err(|e| format!("Error reading store file: {}", e))?;
-
-    if data.len() < NONCE_SIZE {
-        return Err("File too small to be valid encrypted file".into());
-    }
-
+    let data = read_encrypted_file(directory, file)?;
     let (nonce_bytes, ciphertext) = data.split_at(NONCE_SIZE);
     let cipher = ChaCha20Poly1305::new(key.into());
     #[allow(deprecated)]
@@ -88,6 +75,26 @@ pub fn crypto_get_app_store_key() -> Result<[u8; 32], String> {
         entry.set_password(&key_b64).map_err(|e| e.to_string())?;
         Ok(key_bytes)
     }
+}
+
+fn read_encrypted_file(directory: &Path, file: &str) -> Result<Vec<u8>, String> {
+    ensure_directory_exists(directory)?;
+    let data =
+        fs::read(directory.join(file)).map_err(|e| format!("Error reading store file: {}", e))?;
+
+    if data.len() < NONCE_SIZE {
+        return Err("File too small to be valid encrypted file".into());
+    }
+
+    Ok(data)
+}
+
+fn ensure_directory_exists(directory: &Path) -> Result<(), String> {
+    if !directory.exists() {
+        fs::create_dir_all(directory)
+            .map_err(|e| format!("Couldn't create store directory {}", e))?;
+    }
+    Ok(())
 }
 
 fn generate_nonce() -> Nonce {

@@ -3,69 +3,68 @@ mod constants;
 mod crypto;
 mod parsing;
 
+use std::path::PathBuf;
+
 use keyring::Entry;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, TrayIconBuilder},
     Manager,
 };
-use uuid::Uuid;
 
 use crate::{
     accounts::{
-        accounts_get_valid_secret, accounts_map_to_dto, accounts_update_store_with,
-        get_saved_accounts, Account, AccountDto,
+        accounts_add_account, accounts_get_saved_accounts, accounts_get_valid_secret,
+        accounts_map_to_dto, accounts_update_store_with, Account, AccountDto,
     },
     constants::APP_ID,
     parsing::parsing_qr_string_to_accounts,
 };
 
 #[tauri::command]
-fn add_account(name: String, secret_b32: String) -> Result<(), String> {
-    let id = Uuid::new_v4().to_string();
-    let secret = accounts_get_valid_secret(secret_b32);
+fn add_account(app: tauri::AppHandle, name: String, secret_b32: String) -> Result<(), String> {
+    let app_path = get_app_data_dir(&app)?;
 
-    let account = Entry::new(APP_ID, &id).map_err(|e| e.to_string())?;
-    account.set_password(&secret).map_err(|e| e.to_string())?;
-
-    let mut accounts = get_saved_accounts()?;
-    accounts.push(Account {
-        id,
-        name,
-        secret: None,
-    });
-
-    accounts_update_store_with(accounts)?;
+    accounts_add_account(&app_path, name, secret_b32)?;
 
     Ok(())
 }
 
 #[tauri::command]
-fn delete_account(id: String) -> Result<(), String> {
+fn delete_account(app: tauri::AppHandle, id: String) -> Result<(), String> {
     let account = Entry::new(APP_ID, &id).map_err(|e| e.to_string())?;
     account.delete_credential().map_err(|e| e.to_string())?;
 
-    let mut accounts = get_saved_accounts()?;
+    let app_path = get_app_data_dir(&app)?;
+
+    let mut accounts = accounts_get_saved_accounts(&app_path)?;
     accounts.retain(|x| x.id != id);
 
-    accounts_update_store_with(accounts)?;
+    accounts_update_store_with(&app_path, accounts)?;
 
     Ok(())
 }
 
 #[tauri::command]
-fn edit_account(id: String, name: String, secret_b32: String) -> Result<(), String> {
+fn edit_account(
+    app: tauri::AppHandle,
+    id: String,
+    name: String,
+    secret_b32: String,
+) -> Result<(), String> {
     let account = Entry::new(APP_ID, &id).map_err(|e| e.to_string())?;
     let secret = accounts_get_valid_secret(secret_b32);
     account.set_password(&secret).map_err(|e| e.to_string())?;
 
-    let mut accounts = get_saved_accounts()?;
+    let app_path = get_app_data_dir(&app)?;
+
+    let mut accounts = accounts_get_saved_accounts(&app_path)?;
 
     if let Some(account) = accounts.iter_mut().find(|x| x.id == id) {
         account.name = name;
     }
 
-    accounts_update_store_with(accounts)?;
+    accounts_update_store_with(&app_path, accounts)?;
 
     Ok(())
 }
@@ -79,20 +78,29 @@ fn get_account_secret(id: String) -> Result<String, String> {
 }
 
 #[tauri::command]
-fn get_all_accounts() -> Result<Vec<AccountDto>, String> {
-    let accounts = get_saved_accounts().map_err(|e| e.to_string())?;
+fn get_all_accounts(app: tauri::AppHandle) -> Result<Vec<AccountDto>, String> {
+    let app_path = get_app_data_dir(&app)?;
+    let accounts = accounts_get_saved_accounts(&app_path).map_err(|e| e.to_string())?;
     let results = accounts_map_to_dto(accounts)?;
 
     Ok(results)
 }
 #[tauri::command]
-fn import_from_qr_code(code: String) -> Result<(), String> {
+fn import_from_qr_code(app: tauri::AppHandle, code: String) -> Result<(), String> {
     let accounts = parsing_qr_string_to_accounts(&code)?;
 
+    let app_path = get_app_data_dir(&app)?;
+
     for account in accounts {
-        add_account(account.name, account.secret.unwrap())?;
+        accounts_add_account(&app_path, account.name, account.secret.unwrap())?;
     }
     Ok(())
+}
+
+fn get_app_data_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to get app data dir: {}", e))
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

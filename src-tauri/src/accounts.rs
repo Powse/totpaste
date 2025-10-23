@@ -1,11 +1,15 @@
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::{
+    path::PathBuf,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use keyring::Entry;
 use serde::{Deserialize, Serialize};
 use totp_rs::{Secret, TOTP};
+use uuid::Uuid;
 
 use crate::{
-    constants::{ACCOUNT_LIST_DIR, ACCOUNT_LIST_FILE, APP_ID},
+    constants::{ACCOUNT_LIST_FILE, APP_ID},
     crypto::{
         crypto_decrypt_file_with_key, crypto_encrypt_text_to_file_with_key,
         crypto_get_app_store_key,
@@ -39,22 +43,47 @@ pub fn accounts_get_valid_secret(secret_b32: String) -> String {
     secret
 }
 
-pub fn get_saved_accounts() -> Result<Vec<Account>, String> {
+pub fn accounts_add_account(
+    app_path: &PathBuf,
+    name: String,
+    secret_b32: String,
+) -> Result<(), String> {
+    let id = Uuid::new_v4().to_string();
+    let secret = accounts_get_valid_secret(secret_b32);
+
+    let account = Entry::new(APP_ID, &id).map_err(|e| e.to_string())?;
+    account.set_password(&secret).map_err(|e| e.to_string())?;
+
+    let mut accounts = accounts_get_saved_accounts(&app_path)?;
+    accounts.push(Account {
+        id,
+        name,
+        secret: None,
+    });
+
+    accounts_update_store_with(&app_path, accounts)?;
+    Ok(())
+}
+
+pub fn accounts_get_saved_accounts(app_path: &PathBuf) -> Result<Vec<Account>, String> {
     let app_key = crypto_get_app_store_key()?;
     let saved_accounts: Vec<Account> =
-        match crypto_decrypt_file_with_key(ACCOUNT_LIST_DIR, ACCOUNT_LIST_FILE, &app_key) {
+        match crypto_decrypt_file_with_key(&app_path, ACCOUNT_LIST_FILE, &app_key) {
             Ok(json) => serde_json::from_slice(&json).unwrap_or_default(),
             Err(_) => vec![],
         };
     Ok(saved_accounts)
 }
 
-pub fn accounts_update_store_with(accounts: Vec<Account>) -> Result<(), String> {
+pub fn accounts_update_store_with(
+    app_path: &PathBuf,
+    accounts: Vec<Account>,
+) -> Result<(), String> {
     let app_key = crypto_get_app_store_key()?;
 
     crypto_encrypt_text_to_file_with_key(
         &serde_json::to_string(&accounts).map_err(|e| e.to_string())?,
-        ACCOUNT_LIST_DIR,
+        app_path,
         ACCOUNT_LIST_FILE,
         &app_key,
     )?;
